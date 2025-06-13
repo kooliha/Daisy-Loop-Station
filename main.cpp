@@ -1,36 +1,81 @@
-
 #include "daisy_seed.h"
+#include "daisysp.h"
 
-// Use the daisy namespace to prevent having to type
-// daisy:: before all libdaisy functions
 using namespace daisy;
+using namespace daisysp;
 
-// Declare a DaisySeed object called hardware
-DaisySeed hardware;
+DaisySeed hw;
+Switch       Ch1Button;
+
+#define kBuffSize 48000 * 5 // 5 seconds at 48kHz
+
+// Loopers and the buffers they'll use
+Looper              looper_l;
+Looper              looper_r;
+float DSY_SDRAM_BSS buffer_l[kBuffSize];
+float DSY_SDRAM_BSS buffer_r[kBuffSize];
+
+
+
+void AudioCallback(AudioHandle::InputBuffer  in,
+                   AudioHandle::OutputBuffer out,
+                   size_t                    size)
+{
+
+    Ch1Button.Debounce();
+
+
+    //if you press the button, toggle the record state
+    if(Ch1Button.RisingEdge())
+    {
+        looper_l.TrigRecord();
+        looper_r.TrigRecord();
+    }
+
+    // if you hold the button longer than 1000 ms (1 sec), clear the loop
+    if(Ch1Button.TimeHeldMs() >= 1000.f)
+    {
+        looper_l.Clear();
+        looper_r.Clear();
+    }
+
+    // Set the led to 5V if the looper is recording
+   // patch.WriteCvOut(2, 5.f * looper_l.Recording());
+
+    // Process audio
+    for(size_t i = 0; i < size; i++)
+    {
+        // store the inputs * the input gain factor
+        float in_l = IN_L[i];
+        float in_r = IN_R[i];
+
+        // store signal = loop signal * loop gain + in * in_gain
+        float sig_l = looper_l.Process(in_l);
+        float sig_r = looper_r.Process(in_r);
+
+        // send that signal to the outputs
+        OUT_L[i] = sig_l;
+        OUT_R[i] = sig_r;
+    }
+}
 
 int main(void)
 {
-    // Declare a variable to store the state we want to set for the LED.
-    bool led_state;
-    led_state = true;
+    // Initialize the hardware
+    hw.Configure();
+    hw.Init();
 
-    // Configure and Initialize the Daisy Seed
-    // These are separate to allow reconfiguration of any of the internal
-    // components before initialization.
-    hardware.Configure();
-    hardware.Init();
+    // Init the loopers
+    looper_l.Init(buffer_l, kBuffSize);
+    looper_r.Init(buffer_r, kBuffSize);
 
-    // Loop forever
-    
-    for(;;)
-    {
-        // Set the onboard LED
-        hardware.SetLed(led_state);
+    // Init the button
+    Ch1Button.Init(hw.GetPin(28), 1000);
 
-        // Toggle the LED state for the next time around.
-        led_state = !led_state;
+    // Start the audio callback
+    hw.StartAudio(AudioCallback);
 
-        // Wait 500ms
-        System::Delay(100);
-    }
+    // loop forever
+    while(1) {}
 }
+
